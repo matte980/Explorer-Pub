@@ -2,15 +2,17 @@ from tkinter import *
 from pathlib import Path
 import os
 
+# QUANDO SELEZIONE SCENDE, ANCHE SCROLLBAR SCENDE
+# CORREGGERE CHE SI PUò SALIRE ANCHE SE NON C'è NULLA SOPRA
+
 #   INITIALISATION
-backgroundColorList = []
 folderList = []
 sortedFolders = []
 
-lblWidth = 15
-canvasPadding = 5
+lblWidth = 16
+canvasPadding = 4
 winWidth, winHeight = 700, 600
-winX, winY = 300, 200
+winX, winY = 500, 150
 sorting = 'Alfabetico'
 sortOrder = 'Ascendente'
 selected = False
@@ -18,9 +20,10 @@ currentSelectionCoord = (-1, -1)
 currentSelectionName = ''
 currentSelection = None
 ElementsInRow = 0
-capsOrNot = 1
+capsOrNot = 0
 anchorText = 'Anchor SX'
 selectedColour = '#cffffd'
+showHidden = True
 
 fakeEvent = '<KeyPress event keysym=Return keycode=2359309 char=\'\r\' x=-300 y=-228>'
 
@@ -65,11 +68,10 @@ class container():
         global imgFile, imgFolder
         global canvasPadding, lblWidth
         global sortedFolders
-        global backgroundColorList
         global textAndImageAnchor
 
         #   FRAME
-        self.frame = Frame(self.master, width = 10, height = 50, bg = self.backgroundColor)
+        self.frame = Frame(self.master, width = 10, height = 40, bg = self.backgroundColor)
         self.frame.grid(row = self.row, column = self.col, sticky = 'nw', padx = canvasPadding)
 
 
@@ -112,29 +114,38 @@ class container():
         self.label.bind('<Button-2>', self.rightClick)
 
     def enter(self, event):
-        global dirName, prevDir
+        global dirName, prevDir, infoLabel
+        infoLabel['text'] = ''
         gotIn = False
         if os.path.isdir(os.path.join(dirName, self.name)):
-            try:
-                prevDir = dirName
-                dirName = os.path.join(dirName, self.name)
-                gotIn = True
-                draw()
-            except PermissionError:
-                print('Accesso non consentito')
-                dirName = os.path.dirname(dirName)
-                draw()
+            prevDir = dirName
+            dirName = os.path.join(dirName, self.name)
+            # gotIn = True
+            gotIn = draw()
         return gotIn
 
     def select(self, event):
+        global dirName, currentSelection, canvas
+        infoLabel['text'] = ''
         for folder in folderList:
             # if folder.backgroundColor != '#ffffff' and folder != self:
             if folder.backgroundColor != '#ffffff':
                 folder.chg_background('#ffffff')
-        global dirName
         self.chg_background(selectedColour)
-        global currentSelection
+
         currentSelection = self
+        scrollCoordList = canvas['scrollregion'].split(' ')
+        scrollRegionYmax = int(scrollCoordList[-1])
+        relPositionY = self.frame.winfo_y() / scrollRegionYmax
+        downDiff = relPositionY - (canvas.yview()[1] - 60 / scrollRegionYmax)
+        upDiff = (canvas.yview()[0] - 60 / scrollRegionYmax) - relPositionY
+        if downDiff > 0:
+            canvas.yview_scroll(2 , 'units')
+        
+        elif upDiff > 0:
+            canvas.yview_scroll(-2 , 'units')
+        
+
         # if self.backgroundColor == '#ffffff':
         #     self.chg_background('#ffff00')
         # else:
@@ -163,8 +174,8 @@ class container():
 
 def keyPressed(event):
     global selected, currentSelection, ElementsInRow, folderList
-    # print(event)
-    # print(event.keysym)
+    # print('Event = ', event)
+    # print('Event keysym = ',event.keysym)
     if event.keysym == 'BackSpace':
         goBack(fakeEvent)
         currentSelection = None
@@ -172,11 +183,9 @@ def keyPressed(event):
     elif event.keysym == 'Return' and currentSelection:
         done = currentSelection.enter(fakeEvent)
         if done:
-            print('cambiato')
             currentSelection = None
-        else: print('STILL HERE')
     if event.keysym in passSelectionDict.keys():
-        if currentSelection:
+        if currentSelection and (currentSelection.position + passSelectionDict.get(event.keysym))>=0:
             try:
                 folderList[currentSelection.position + passSelectionDict.get(event.keysym)].select(fakeEvent)
             except:
@@ -205,13 +214,14 @@ def resize(event):
             folder.move(row, col)
 
 def onFrameConfigure(event):
-    canvas.configure(scrollregion=canvas.bbox('all'))
+    canvas.configure(scrollregion = canvas.bbox('all'))
 
 
 #   CHANGE VIEW EVENTS
 
 def goBack(event):
     global dirName, canvas, prevDir
+    infoLabel['text'] = ''
     if dirName == os.path.dirname(dirName):
         return
     prevDir = dirName
@@ -222,6 +232,7 @@ def goBack(event):
 
 def previous(event):
     global dirName, canvas, prevDir
+    infoLabel['text'] = ''
     if prevDir != dirName:
         dirName, prevDir = prevDir, dirName
         draw()
@@ -251,6 +262,12 @@ def anchorChange(event):
     anchorButton['text'] = anchorText
     draw()
 
+def showHiddenFunc(event):
+    global showHidden
+    showHidden = not showHidden
+    showHiddenButton['text'] = 'Hide Hidden'
+    draw()
+
 
 #   UTILITY FUNCTIONS
 
@@ -262,7 +279,10 @@ def sort(unsortedList):
         else:
             return [x for _,x in sorted(zip([name.lower() for name in unsortedList],unsortedList))]
     elif sorting=='Alfabetico':
-        return sorted(unsortedList, reverse = True)
+        if capsOrNot:
+            return sorted(unsortedList, reverse = True)
+        else:
+            return [x for _,x in sorted(zip([name.lower() for name in unsortedList],unsortedList), reverse = True)]
     if sorting == 'Tipo' and sortOrder == 'Ascendente':
         return typeSorting(unsortedList)
     if sorting == 'Tipo':
@@ -283,17 +303,30 @@ def typeSorting(unsortedList):
 def draw():
     global imgFile, imgFolder, folderList
     global canvasPadding, lblWidth
-    global backgroundColorList
+    global dirName
+
+    try:
+        os.listdir(dirName)
+    except PermissionError:
+        name = os.path.normpath(os.path.basename(dirName))
+        infoLabel['text'] = 'Accesso non consentito a ' + name
+        dirName = os.path.dirname(dirName)
+        return False
+
     for element in folderList:
         element.frame.grid_forget()
         element.image.grid_forget()
         element.label.grid_forget()
     folderList = []
+
     sortedFolders = sort(os.listdir(dirName))
+    if not showHidden: sortedFolders = [name for name in sortedFolders if name[0]!='.']
+
     root.title(dirName)
     for nCol, folderName in enumerate(sortedFolders):
         nRow = nCol // ElementsInRow
         folderList.append(container(folderFrame, nCol, nRow, folderName))
+    return True
 
 def getElementsInRow():
     global winWidth, lblWidth, canvasPadding, passSelectionDict
@@ -319,12 +352,12 @@ root.bind( '<Configure>', resize)
 
 
 #   TOP FRAME
-topFrame = Frame(root, bg = 'white')
-topFrame.pack(expand = 'true', fill = 'both')
+rootFrame = Frame(root, bg = 'white')
+rootFrame.pack(expand = 'true', fill = 'both')
 
 
 #   OPTION FRAME
-optionFrame = Frame(topFrame, bg = 'white', height = 20)
+optionFrame = Frame(rootFrame, bg = 'white', height = 20)
 optionFrame.pack(fill = 'x')
 
 #   GO BACK BUTTON
@@ -337,22 +370,25 @@ previousButton = Button(optionFrame, text = 'Previous')
 previousButton.pack(side = 'left')
 previousButton.bind('<Button-1>', previous)
 
+#   SHOW HIDDEN BUTTON
+showHiddenButton = Button(optionFrame, text = 'Show Hidden')
+showHiddenButton.pack(side = 'left')
+showHiddenButton.bind('<Button-1>', showHiddenFunc)
+
 #    ANCHOR BUTTON
 anchorButton = Button(optionFrame, text = anchorText)
 anchorButton.pack(side = 'right')
 anchorButton.bind('<Button-1>', anchorChange)
 
-
-#   SORT ORDER (ASC, DESC) MENU
+#   SORTING TYPE
 sortTextVariable = StringVar(optionFrame)
 sortTextVariable.set(sortingList[0])
 
 sortingMenu = OptionMenu(optionFrame, sortTextVariable, *sortingList)
-sortingMenu.config(width = 10, font=('Helvetica', 12))
+sortingMenu.config(width = 9, font=('Helvetica', 12))
 sortingMenu.pack(side='left')
 
 sortTextVariable.trace('w', sortCallback)
-
 
 #   SORT ORDER (ASC, DESC) MENU
 sortingOrderList = ['Ascendente', 'Discendente']
@@ -360,18 +396,18 @@ orderTextVariable = StringVar(optionFrame)
 orderTextVariable.set(sortingOrderList[0])
 
 sortingOrderMenu = OptionMenu(optionFrame, orderTextVariable, *sortingOrderList)
-sortingOrderMenu.config(width = 10, font=('Helvetica', 12))
+sortingOrderMenu.config(width = 9, font=('Helvetica', 12))
 sortingOrderMenu.pack(side='left')
 
 orderTextVariable.trace('w', orderCallback)
 
 
 #   MAIN CANVAS
-canvas = Canvas(topFrame, bg = 'white')
+canvas = Canvas(rootFrame, bg = 'white')
 folderFrame = Frame(canvas, bg = 'white')
 
 #   VERTICAL SCROLLBAR
-vsb = Scrollbar(topFrame, orient='vertical', command=canvas.yview)
+vsb = Scrollbar(rootFrame, orient='vertical', command=canvas.yview)
 canvas.configure(yscrollcommand=vsb.set)
 vsb.pack(side='right', fill='y')
 
@@ -380,8 +416,18 @@ canvas.create_window((4,4), window=folderFrame, anchor='nw')
 
 folderFrame.bind('<Configure>', onFrameConfigure)
 
-#   EVENTS
-topFrame.bind('<Double-1>', goBack)
+
+#   MESSAGE BAR
+infoFrame = Frame(root, bg = 'white', height = 40)
+infoFrame.pack(side = 'bottom', fill = 'x')
+
+infoLabel = Label(infoFrame, font=('Helvetica', 14), anchor = 'nw', justify = 'left')
+infoLabel.pack(side = 'left', fill = 'x', expand = 'yes', padx = 5)
+
+# --------------------------------
+
+#   BINDED EVENTS
+rootFrame.bind('<Double-1>', goBack)
 canvas.bind('<Double-1>', goBack)
 folderFrame.bind('<Double-1>', goBack)
 
